@@ -15,8 +15,8 @@ namespace corio
 {
     enum event_op {                                 /** Event Operation */
         EVENT_ADD               = EPOLL_CTL_ADD,    /** Add Events */
-        EVENT_MOD               = EPOLL_CTL_MOD,    /** Modify Events */
-        EVENT_DEL               = EPOLL_CTL_DEL     /** Delete Events */
+        EVENT_MODIFY            = EPOLL_CTL_MOD,    /** Modify Events */
+        EVENT_DELETE            = EPOLL_CTL_DEL     /** Delete Events */
     }; 
 
     enum event_flag {                               /** Event Flag */
@@ -25,12 +25,12 @@ namespace corio
     };
 
     enum event_type {                               /** Event Type */
-        EVENT_R                 = EPOLLIN,          /** Read Event */
-        EVENT_W                 = EPOLLOUT,         /** Write Event */
-        EVENT_ERR               = EPOLLERR,         /** Error Event */
-        EVENT_HUP               = EPOLLHUP,         /** Hang Up Event */
-        EVENT_WAK               = 1u << 18,         /** Wakeup Notification */
-        EVENT_TIM               = 1u << 19          /** Timeout Event */
+        EVENT_READ              = EPOLLIN,          /** Read Event */
+        EVENT_WRITE             = EPOLLOUT,         /** Write Event */
+        EVENT_ERROR             = EPOLLERR,         /** Error Event */
+        EVENT_HANGUP            = EPOLLHUP,         /** Hang Up Event */
+        EVENT_NOTIFY            = 1u << 18,         /** Wakeup Notification */
+        EVENT_TIMEOUT           = 1u << 19          /** Timeout Event */
     };
 
 #elif   defined(__APPLE__) || \
@@ -89,7 +89,7 @@ namespace corio
             const int fd,
             const int op, 
             const int flags, 
-            event &event);
+            event event);
         
         /** 
          * Wait timeout milliseconds for new events. 
@@ -115,6 +115,11 @@ namespace corio
          * Get the maximum number of events this object can process at once.
          */
         int get_max_events();
+
+        /**
+         * Returns true when there are no more events.
+         */
+        bool empty();
     };
 }
 

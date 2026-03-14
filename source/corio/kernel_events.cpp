@@ -36,7 +36,7 @@ namespace corio
         const int fd,
         const int op, 
         const int flags, 
-        event &ev)
+        event ev)
     {
         assert(fd != -1);
         struct epoll_event ep_ev = {
@@ -59,7 +59,7 @@ namespace corio
 
     bool kernel_events::next(event &ev)
     {
-        assert(position <= num_events);
+        assert(0 <= position && position <= num_events);
         if(position == num_events) 
             return false;
         struct epoll_event *ep_ev = events.get() + position++;
@@ -76,5 +76,11 @@ namespace corio
     int kernel_events::get_max_events()
     {
         return max_events;
+    }
+
+    bool kernel_events::empty()
+    {
+        assert(0 <= position && position <= num_events);
+        return position == num_events;
     }
 }

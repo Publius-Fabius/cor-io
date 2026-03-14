@@ -2,48 +2,60 @@
 #define CORIO_SLOT_MAP_H
 
 #include <vector>
+#include <queue>
 #include <stdint.h>
 
 namespace corio 
 {
     template<typename object> class slot_map 
     {    
-        struct entry 
-        {
+        struct entry {
             object *pointer;
-            uint32_t generation;
-            uint32_t epoch;
-            entry(object *ptr):
+            uint64_t generation;
+            entry(object *ptr = NULL):
                 pointer(ptr),
-                generation(0),
-                epoch(0) { }
+                generation(0ULL) { }
         };
 
-        std::vector<entry> entries;
-        std::vector<int> pool;
+        using entry_set = std::vector<entry>;
+        using slot_pool = std::priority_queue<
+            int, 
+            std::vector<int>, 
+            std::greater<int>>;
+
+        entry_set m_entries;
+        slot_pool m_pool;
+        size_t m_size;
+
+        inline entry &at(const int index)
+        {
+            assert(0 <= index && index <= m_entries.size());
+            return m_entries.at(index);
+        }
 
         public:
 
         using object_type = object;
 
-        inline entry &at(const int index)
+        inline size_t size()
         {
-            return entries.at(index);
+            return m_size;
         }
 
         int acquire(object *pointer)
         {
             if(pool.size() > 0) {
-                const int slot = pool.back();
-                pool.pop_back();
+                const int slot = m_pool.top();
+                m_pool.pop();
                 entry &ent = at(slot);
                 ent.pointer = pointer;
-                ++ent.epoch;
                 ++ent.generation;
+                ++m_size;
                 return slot;
             } else {
-                const int slot = (int)entries.size();
-                entries.push_back(entry(pointer));
+                const int slot = (int)m_entries.size();
+                m_entries.push_back(entry(pointer));
+                ++m_size;
                 return slot;
             }
         }
@@ -52,9 +64,9 @@ namespace corio
         {
             entry &ent = at(slot);
             ent.pointer = NULL;
-            ++ent.epoch;
             ++ent.generation;
-            pool.push_back(slot);
+            m_pool.push(slot);
+            --m_size;
         }
 
         inline uint32_t get_generation(const int slot)
@@ -62,31 +74,20 @@ namespace corio
             return at(slot).generation;
         }
 
-        inline uint32_t get_epoch(const int slot)
-        {
-            return at(slot).epoch;
-        }
-
         inline object* get_pointer(const int slot)
         {
             return at(slot).pointer;
         }
 
-        inline uint32_t increment_epoch(const int slot)
+        inline uint32_t increment_generation(const int slot)
         {
-            return ++at(slot).epoch;
+            return ++at(slot).generation;
         }
 
         inline object* with_generation(const int slot, const uint32_t gen)
         {
             entry &ent = at(slot);
             return ent.generation == gen ? ent.pointer : NULL;
-        }
-
-        inline object* with_epoch(const int slot, const uint32_t epoch)
-        {
-            entry &ent = at(slot);
-            return ent.epoch == epoch ? ent.pointer : NULL;
         }
     };
 }

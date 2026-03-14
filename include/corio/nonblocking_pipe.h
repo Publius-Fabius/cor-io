@@ -22,13 +22,9 @@ namespace corio
          */
         void close()
         {
-            if(fds[0] != -1) 
-                if(::close(fds[0]) == -1)
-                    throw system_error("::close");
+            if(fds[0] != -1) ::close(fds[0]);
             fds[0] = -1;
-            if(fds[1] != -1) 
-                if(::close(fds[1]) == -1)
-                    throw system_error("::close");
+            if(fds[1] != -1) ::close(fds[1]);
             fds[1] = -1;
         }
 
@@ -111,6 +107,16 @@ namespace corio
                 throw runtime_error("malformed read from pipe");
 
             return ERR_OK;
+        }
+
+        int get_read_fd()
+        {
+            return fds[0];
+        }
+
+        int get_write_fd()
+        {
+            return fds[1];
         }
     };
 }

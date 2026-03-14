@@ -38,7 +38,8 @@ namespace corio
         ERR_TIME    = -1705,                    /** Timeout Error */
         ERR_LIMIT   = -1706,                    /** Limit Reached */
         ERR_EOF     = -1707,                    /** EOF Encountered */
-        ERR_SSL     = -1708                     /** SSL Error */
+        ERR_SSL     = -1708,                    /** SSL Error */
+        ERR_BACK    = -1709,                    /** Backpressure */
 
         /* HTTP Errors */
 

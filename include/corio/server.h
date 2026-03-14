@@ -16,6 +16,9 @@ namespace corio
         PROTOCOL_NONE               = 5         /** No Protocol */
     };
 
+    /** Base Callback */
+    using spawn_callback = coroutine (*)(data state);
+
     /** Socket Accept Callback */
     using accept_callback = coroutine (*)(int socket, data state);
 
@@ -87,9 +90,6 @@ namespace corio
          */
         virtual int stop() = 0;
 
-        /** Spawn Callback */
-        using callback = coroutine (*)(data state);
-
         /** 
          * Spawn a new task. 
          * 
@@ -98,7 +98,7 @@ namespace corio
          *      ERR_LIMIT - Task limit reached.
          *      ERR_WANTW - Could not dispatch to any workers.
          */
-        virtual int spawn(callback call, data state) = 0;
+        virtual int spawn(spawn_callback call, data state) = 0;
     };
 
     /** 
