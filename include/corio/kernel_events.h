@@ -9,7 +9,22 @@
 
 #ifdef __linux__
 
+#define EPOLL_EVENTS 1
+
 #include <sys/epoll.h>
+
+#elif   defined(__APPLE__) || \
+        defined(__FreeBSD__) || \
+        defined(__NetBSD__) || \
+        defined(__OpenBSD__) || \
+        defined(__DragonFly__)
+#define KQUEUE_EVENTS 1
+#error "KQUEUE NOT YET SUPPORTED"
+#else
+#error "SYSTEM NOT SUPPORTED"
+#endif
+
+#ifdef EPOLL_EVENTS
 
 namespace corio 
 {
@@ -33,21 +48,30 @@ namespace corio
         EVENT_TIMEOUT           = 1u << 19          /** Timeout Event */
     };
 
-#elif   defined(__APPLE__) || \
-        defined(__FreeBSD__) || \
-        defined(__NetBSD__) || \
-        defined(__OpenBSD__) || \
-        defined(__DragonFly__)
-#error "KQUEUE NOT YET SUPPORTED"
-#else
-#error "SYSTEM NOT SUPPORTED"
+#elif defined(KQUEUE_EVENTS)
 #endif
 
     /** IO Event */
-    struct event 
-    {
+    struct event {
         int events;
         data data;
+    };
+
+    class kernel_events;
+
+    /** RAII File Descriptor For Event Handling */
+    struct event_fd {
+
+        int fd = -1;
+        int flags = 0;
+
+#ifdef EPOLL_EVENTS
+        int epfd = -1;      
+#elif defined(KQUEUE_EVENTS)
+#endif
+
+        event_fd(kernel_events &evs, int fd);
+        ~event_fd(); 
     };
 
     /** IO Event Object */
@@ -55,15 +79,9 @@ namespace corio
     {
         int fd, num_events, max_events, position;
 
-#ifdef __linux__
-
-        std::unique_ptr<::epoll_event[]> events;       
-        
-#elif   defined(__APPLE__) || \
-        defined(__FreeBSD__) || \
-        defined(__NetBSD__) || \
-        defined(__OpenBSD__) || \
-        defined(__DragonFly__)
+#ifdef EPOLL_EVENTS
+        std::unique_ptr<::epoll_event[]> events;           
+#elif defined(KQUEUE_EVENTS)
 #endif
 
         public:
@@ -86,7 +104,7 @@ namespace corio
          * THROWS: system_error
          */
         void control(
-            const int fd,
+            event_fd &fd,
             const int op, 
             const int flags, 
             event event);
@@ -99,12 +117,27 @@ namespace corio
          */
         int wait(const int timeout);
 
+        /** Event Iterator */
+        struct iterator {
+            
+#ifdef EPOLL_EVENTS
+            epoll_event *pointer;
+#elif defined(KQUEUE_EVENTS)
+#endif
+            event &operator*();
+            iterator operator++();
+            bool operator!=(iterator &other);
+        };
+ 
         /** 
-         * Iterate through new events. 
-         * 
-         * RETURNS: A value of 'false' means the iteration is finished.
+         * Iterator to first event. 
          */
-        bool next(event &event);
+        iterator begin();
+
+        /** 
+         * Iterator to last event.
+         */
+        iterator end();
 
         /** 
          * Get the current number of new events.
@@ -115,11 +148,6 @@ namespace corio
          * Get the maximum number of events this object can process at once.
          */
         int get_max_events();
-
-        /**
-         * Returns true when there are no more events.
-         */
-        bool empty();
     };
 }
 

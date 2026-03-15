@@ -7,8 +7,7 @@
 
 namespace corio 
 {
-    /** Network Protocol */
-    enum protocol {
+    enum protocol {                             /** Network Protocol */
         PROTOCOL_UDP                = 1,        /** UDP over IPv4 */
         PROTOCOL_UDP6               = 2,        /** UDP over IPv6 */
         PROTOCOL_TCP                = 3,        /** TCP over IPv4 */
@@ -16,11 +15,17 @@ namespace corio
         PROTOCOL_NONE               = 5         /** No Protocol */
     };
 
+    /** Server Task */
+    struct task;
+
+    /** Coroutine with Task State */
+    using server_coroutine = coroutine<promise<task, int>>;
+
     /** Base Callback */
-    using spawn_callback = coroutine (*)(data state);
+    using spawn_callback = server_coroutine (*)(data state);
 
     /** Socket Accept Callback */
-    using accept_callback = coroutine (*)(int socket, data state);
+    using accept_callback = server_coroutine (*)(int socket, data state);
 
     /** Error Callback */
     using error_callback = int (*)(int error, data state);
@@ -107,7 +112,7 @@ namespace corio
      * RETURNS: ERR_OK, ERR_SYS
      */
     int control_events(
-        int fd,
+        event_fd &fd,
         int op,
         int flags,
         int events);
@@ -119,18 +124,21 @@ namespace corio
      *      ERR_SYS - A syscall error.
      *      >= 0 - The number of events received from 0 to max_events.
      */
-    struct wait_for_events 
-    {
+    struct wait_for_io_events {
         uint64_t timeout;
-        event* events;
-        int max_events;
-        int num_events;
-
-        wait_for_events(uint64_t timeout, event *events, int max_events);
+        wait_for_io_events(uint64_t timeout);
         bool await_ready() const noexcept;
-        void await_suspend(coroutine handle);
+        void await_suspend(coroutine_handle<> handle);
         int await_resume() noexcept;
     };
+
+    /**
+     * IO Event Iteration.
+     */
+    struct io_events_type { 
+        event *begin();
+        event *end();
+    } io_events;
 }
 
 #endif

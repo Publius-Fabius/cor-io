@@ -15,8 +15,7 @@
 
 namespace corio 
 {
-    server_params::server_params()
-    {
+    server_params::server_params() {
         protocol              = PROTOCOL_TCP;
         port                  = 80;
         backlog               = 8;
@@ -56,10 +55,11 @@ namespace corio
 
     struct task {
         int mark;                                   /** Ready Set Bit */
+        int slot;                                   /** Slot Number */
         uint64_t id;                                /** Task Id */
-        coroutine handle;                           /** Coroutine Handle */
+        server_coroutine handle;                    /** Coroutine Handle */
         std::vector<event> events;                  /** Event Set */
-        task(uint64_t id_, coroutine handle_) : 
+        task(uint64_t id_, server_coroutine handle_) : 
             id(id_), 
             handle(handle_), 
             mark(0) { }
@@ -68,8 +68,7 @@ namespace corio
     struct standard_server;
 
     /** Worker Thread */
-    struct worker 
-    {
+    struct worker {
         struct timeout_queue_elem {
             int slot;
             uint64_t expiry;
@@ -88,14 +87,12 @@ namespace corio
             std::vector<task*> tasks;
             void push(task *t) { 
                 assert(t);
-                if(t->mark) 
-                    return;
+                if(t->mark) return;
                 t->mark = 1;
                 tasks.push_back(t); 
             }
             task *pop() {
-                if(tasks.empty()) 
-                    return NULL;
+                if(tasks.empty()) return NULL;
                 task *t = tasks.back();
                 tasks.pop_back();
                 assert(t);
@@ -126,13 +123,15 @@ namespace corio
         message_queue messages;
         task_queue pending;
         ready_set ready;
-        task *active;
+        task *current_task;
 
         worker(standard_server &srv);
         ~worker();
 
         void enqueue_ready_set();
         void dispatch_ready_set();
+        task *create_task(spawn_callback callback, data state);
+        void delete_task(task *t);
         bool tick();
         void start();
     };
@@ -154,10 +153,12 @@ namespace corio
         standard_server(server_params &ps);
         ~standard_server();
 
+        bool increment_tasks();
+        void decrement_tasks();
+
         void create_server_socket();
         void bind_server_socket();
         void listen_on_server_socket();
-
         int open() override;
         int close() override;
         void dispatch_connection(const int socket);
@@ -165,10 +166,11 @@ namespace corio
         void main_loop();
         int start() override;
         int stop() override;
+        int spawn_dispatch(spawn_callback call, data state);
         int spawn(spawn_callback call, data state) override;
     };
 
-    thread_local worker *current_worker = NULL;
+    thread_local worker *current_worker = nullptr;
 
     struct fd_slot_pair {
         union { 
@@ -183,12 +185,17 @@ namespace corio
     worker::worker(standard_server &srv) :
         server(srv),
         events(srv.params.worker_events),
-        active(NULL) { }
+        current_task(NULL) { }
 
-    worker::~worker() = default;
+    worker::~worker() {
+        for(task *t : slots) {
+            t->handle.destroy();
+            delete t;
+            server.decrement_tasks();
+        }
+    }
 
-    void worker::enqueue_ready_set()
-    {
+    void worker::enqueue_ready_set() {
         const auto now = now_ms<uint64_t>();
 
         while(!timeouts.empty()) {
@@ -203,7 +210,7 @@ namespace corio
 
         for(event ev; events.next(ev);) {
             fd_slot_pair pair { .pack = ev.data };
-            auto *t = slots.get_pointer(pair.slot);
+            auto *t = slots[pair.slot];
             if(!t) continue;
             ready.push(t);
             t->events.push_back({ ev.events, { .fd = pair.fd }});
@@ -213,31 +220,52 @@ namespace corio
             switch(msg.type) {
                 case MESSAGE_SHUTDOWN: continue;
                 case MESSAGE_NOTIFY:
-                    auto *t = slots.get_pointer(msg.slot);
+                    auto *t = slots[msg.slot];
                     if(!t) continue;
                     if(t->id != msg.id) continue;
                     ready.push(t);
                     t->events.push_back({ EVENT_NOTIFY, { 0 }});
                     continue;
-                default: std::terminate;
+                default: std::terminate();
             }
         }
 
         for(task_queue_elem elem; pending.read(elem) == ERR_OK;) {
-            task *t = new task(
-                ::atomic_fetch_add(&server.next_id, 1),
-                elem.callback(server.params.state));
+            auto *t = create_task(elem.callback, server.params.state);
             ready.push(t);
         }
     }
 
-    void worker::dispatch_ready_set()
-    {
-        
+    void worker::dispatch_ready_set() {
+        for(task *t; t = ready.pop();) {
+            assert(!t->handle.done());
+
+            slots.increment_generation(t->slot);
+            current_task = t;
+            t->handle.resume();
+            current_task = nullptr;
+
+            if(t->handle.done()) delete_task(t);
+        }
     }
 
-    bool worker::tick()
-    {
+    task *worker::create_task(spawn_callback callback, data state) {
+        task *t = new task(
+                ::atomic_fetch_add(&server.next_id, 1),
+                callback(state));
+        t->handle.promise().state = t;
+        t->slot = slots.acquire(t);
+        return t;
+    }
+
+    void worker::delete_task(task *t) {
+        slots.release(t->slot);
+        t->handle.destroy();
+        delete t;
+        server.decrement_tasks();
+    }
+
+    bool worker::tick() {
         uint64_t timeout = server.params.worker_timeout;
 
         if(!timeouts.empty()) {
@@ -251,15 +279,14 @@ namespace corio
         
         enqueue_ready_set();
         dispatch_ready_set();
-
-        return 
-            atomic_load(&server.mode) == MODE_RUNNING && 
-            atomic_load(&server.num_tasks) > 0;
     }
     
-    static void launch_worker(worker &worker) 
-    {
-        while(worker.tick());
+    static void launch_worker(worker &w) {
+        standard_server &s = w.server;
+        current_worker = &w;
+        while(  ::atomic_load(&s.mode) != MODE_STOPPED || 
+                ::atomic_load(&s.num_tasks) > 0)
+            w.tick();
     }
 
     standard_server::standard_server(server_params &ps) :
@@ -272,13 +299,27 @@ namespace corio
             workers.emplace_back(*this);
     }
 
-    standard_server::~standard_server()
-    {
+    standard_server::~standard_server() {
         close();
     }
  
-    void standard_server::create_server_socket()
-    {
+    bool standard_server::increment_tasks() {
+        const int32_t max_tasks = params.worker_tasks * params.workers;
+        int32_t num_tasks_ = ::atomic_load(&num_tasks);
+        for(;;) {
+            int32_t next = num_tasks_ + 1;
+            if(next > max_tasks) return false;
+            if(::atomic_compare_exchange_weak(
+                &num_tasks, &num_tasks_, next)) 
+                return true;
+        }
+    }
+    
+    void standard_server::decrement_tasks() {
+        ::atomic_fetch_sub(&num_tasks, 1);
+    }
+
+    void standard_server::create_server_socket() {
         assert(server_socket == -1);
 
         int domain = -1;
@@ -322,8 +363,7 @@ namespace corio
         server_socket = fd;
     }
 
-    void standard_server::bind_server_socket()
-    {
+    void standard_server::bind_server_socket() {
         assert(server_socket != -1);
 
         struct sockaddr_storage addr;
@@ -365,15 +405,13 @@ namespace corio
             throw system_error("::bind"); 
     }
 
-    void standard_server::listen_on_server_socket()
-    {
+    void standard_server::listen_on_server_socket() {
         assert(server_socket != -1);
         if(::listen(server_socket, params.backlog) == -1) 
             throw system_error("::listen");
     }
 
-    int standard_server::open()
-    {
+    int standard_server::open() {
         assert(server_socket == -1);
         create_server_socket();
         bind_server_socket();
@@ -382,8 +420,7 @@ namespace corio
         return 0;
     }
 
-    int standard_server::close()
-    {
+    int standard_server::close() {
         if(server_socket == -1) 
             return 0;
         ::close(server_socket);
@@ -391,9 +428,8 @@ namespace corio
         return 0;
     }
 
-    coroutine accept_trampoline(data state)
-    {
-        assert(current_worker != NULL);
+    server_coroutine accept_trampoline(data state) {
+        assert(current_worker != nullptr);
 
         // current_worker is thread_local set in the worker thread.
         server_params &params = current_worker->server.params;
@@ -401,10 +437,9 @@ namespace corio
         return params.on_accept(state.fd, params.state);
     }
 
-    void standard_server::dispatch_connection(const int fd)
-    {
+    void standard_server::dispatch_connection(const int fd) {
         do {
-            switch(spawn(accept_trampoline, { .fd = fd })) {
+            switch(spawn_dispatch(accept_trampoline, { .fd = fd })) {
                 case ERR_WANTW: break;
                 case ERR_OK: return;
                 default: std::terminate();
@@ -421,9 +456,9 @@ namespace corio
  
             // Wait for a pipe to be writable.
             while(events.wait(1000) == 0)
-                // Log significant backpressure.
-                if(params.on_error(ERR_BACK, params.state) != ERR_OK)
-                    throw runtime_error("on_error");
+
+                // Log significant backpressure events.     
+                params.on_error(ERR_BACK, params.state);
 
             // Stop listening for write events on pending queues.
             for(auto &w : workers) 
@@ -436,90 +471,120 @@ namespace corio
         } while(true);
     }
 
-    void standard_server::accept_connections()
-    {
+    void standard_server::accept_connections() {
         const int max_tasks = params.worker_tasks * params.workers;
-        
-        while(::atomic_load(&num_tasks) < max_tasks) {
+            
+        do {
+            // "Pre-allocate" the task so we aren't stuck with an open fd. 
+            if(!increment_tasks())
+                return;
 
             const int fd = ::accept(server_socket, NULL, NULL);
             if(fd == -1) {
+                
+                // Accept failed, free up the space for another task.
+                decrement_tasks();
+
+                // The server socket had no awaiting connections.
                 if(errno == EAGAIN || errno == EWOULDBLOCK) 
                     return;
+
+                // Store errno because on_error may clobber it.
                 const int err = errno;
-                if(params.on_error(ERR_SYS, params.state) != ERR_OK)
-                    throw runtime_error("on_error");
+
+                // Log the error.
+                params.on_error(ERR_SYS, params.state);
+            
                 switch(err) {
+
+                    // These are temporary problems that can be resolved.
                     case EHOSTUNREACH:
                     case ENETUNREACH:
                     case ENONET:
                     case EHOSTDOWN:
                     case ENETDOWN:
                         return;
+
+                    // These are problems with the client.
                     case EPROTO:
                     case ENOPROTOOPT:
                     case ECONNABORTED:
                     case EOPNOTSUPP:
                         continue;
+
+                    // These problems can't be resolved.
                     default:
-                        throw system_error("on_error");
+                        throw system_error("::accept");
                 }
             }
 
             const int flags = ::fcntl(fd, F_GETFL);
             if(flags == -1) {
                 ::close(fd);
+                decrement_tasks();
                 throw system_error("::fcntl");
             }
             if(::fcntl(fd, F_SETFL, O_NONBLOCK | flags) == -1) {
                 ::close(fd);
+                decrement_tasks();
                 throw system_error("::fcntl");
             } 
 
-            ::atomic_fetch_add(&num_tasks, 1);
-
             dispatch_connection(fd);
-        }
+
+        } while((::atomic_load(&mode) == MODE_RUNNING));
     }
 
-    void standard_server::main_loop()
-    {
+    void standard_server::main_loop() {
         while(::atomic_load(&mode) == MODE_RUNNING) {
             accept_connections();
             events.wait(params.server_timeout);
         }
-
-        threads.clear(); // joins jthreads
-
-        ::atomic_store(&mode, MODE_STOPPED);
     }
 
-    int standard_server::start()
-    {
+    int standard_server::start() {
+
         assert(::atomic_load(&mode) == MODE_CREATED);
+        assert(::atomic_load(&num_tasks) == 0);
         assert(server_socket != -1);
+
         ::atomic_store(&mode, MODE_RUNNING);
-        for(int x = 0; x < workers.size(); ++x) {
+
+        // Launch the worker threads.
+        for(size_t x = 0; x < workers.size(); ++x) 
             threads.emplace_back(launch_worker, workers[x]);
+        
+        // Enter main reactor loop.
+        try {
+            main_loop();
+        } catch (std::exception &ex) {
+            fputs(ex.what(), stderr);
         }
-        main_loop();
-        return 0;
+        
+        ::atomic_store(&mode, MODE_STOPPED);
+
+        // Clearing here will automatically join the worker threads.
+        threads.clear();
+
+        return ERR_OK;
     }
 
-    int standard_server::stop()
-    {
-        assert(::atomic_load(&mode) == MODE_RUNNING);
+    int standard_server::stop() {
         ::atomic_store(&mode, MODE_STOPPING);
-        return 0;
+        return ERR_OK;
     }
 
-    int standard_server::spawn(spawn_callback call, data state)
-    {
+    int standard_server::spawn_dispatch(spawn_callback call, data state) {
+
+        // Atomically incrementing seed for load balancing.
         static atomic_size_t seed = 0;
 
         worker::task_queue_elem elem = { call, state };
-          
+        
+        // Size never changes so this is fine.  In the case of server shutdown,
+        // the worker thread waits until all tasks are finished before stopping.
         const size_t size = workers.size();
+
         const size_t base_index = ::atomic_fetch_add(&seed, 1);
 
         for(size_t x = 0; x < size; ++x) {
@@ -532,5 +597,15 @@ namespace corio
         }
 
         return ERR_WANTW;
+    }
+
+    int standard_server::spawn(spawn_callback call, data state) {
+        if(!increment_tasks()) return ERR_LIMIT;
+        int err = -1;
+        if((err = spawn_dispatch(call, state)) != ERR_OK) {
+            decrement_tasks();
+            return err;
+        }
+        return ERR_OK;
     }
 }

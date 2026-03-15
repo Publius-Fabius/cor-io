@@ -7,8 +7,7 @@
 
 namespace corio 
 {
-    template<typename object> class slot_map 
-    {    
+    template<typename object> class slot_map {    
         struct entry {
             object *pointer;
             uint64_t generation;
@@ -27,8 +26,7 @@ namespace corio
         slot_pool m_pool;
         size_t m_size;
 
-        inline entry &at(const int index)
-        {
+        inline entry &at(const int index) {
             assert(0 <= index && index <= m_entries.size());
             return m_entries.at(index);
         }
@@ -37,13 +35,14 @@ namespace corio
 
         using object_type = object;
 
-        inline size_t size()
-        {
+        slot_map() : m_size(0) { }
+
+        inline size_t size() {
             return m_size;
         }
 
-        int acquire(object *pointer)
-        {
+        int acquire(object *pointer) {
+            m_entries.emplace();
             if(pool.size() > 0) {
                 const int slot = m_pool.top();
                 m_pool.pop();
@@ -60,8 +59,7 @@ namespace corio
             }
         }
 
-        void release(const int slot)
-        {
+        void release(const int slot) {
             entry &ent = at(slot);
             ent.pointer = NULL;
             ++ent.generation;
@@ -69,25 +67,54 @@ namespace corio
             --m_size;
         }
 
-        inline uint32_t get_generation(const int slot)
-        {
+        inline uint32_t get_generation(const int slot) {
             return at(slot).generation;
         }
 
-        inline object* get_pointer(const int slot)
-        {
+        inline object* operator[](const size_t slot) {
             return at(slot).pointer;
         }
 
-        inline uint32_t increment_generation(const int slot)
-        {
+        inline uint32_t increment_generation(const int slot) {
             return ++at(slot).generation;
         }
 
-        inline object* with_generation(const int slot, const uint32_t gen)
-        {
+        inline object* with_generation(const int slot, const uint32_t gen) {
             entry &ent = at(slot);
             return ent.generation == gen ? ent.pointer : NULL;
+        }
+
+        struct iterator {
+            std::vector<entry> &entries;
+            int slot;
+            iterator(std::vector<entry> &entries_, int slot_) : 
+                entries(entries_),
+                slot(slot_) 
+            {
+                for(;slot < entries.size(); ++slot) 
+                    if(entries[slot].pointer)
+                        break;
+            }
+            iterator& operator++() {
+                while(slot < entries.size()) 
+                    if(entries[++slot].pointer)
+                        break;
+                return *this;
+            }
+            bool operator!=(const iterator& other) const {
+                return slot != other.slot;
+            }
+            auto operator*() const {
+                return entries[slot].pointer;
+            }
+        };
+
+        iterator begin() {
+            return iterator(m_entries, 0);
+        }
+
+        iterator end() {
+            return iterator(m_entries, m_entries.size());
         }
     };
 }
