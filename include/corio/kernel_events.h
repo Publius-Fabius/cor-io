@@ -60,18 +60,33 @@ namespace corio
     class kernel_events;
 
     /** RAII File Descriptor For Event Handling */
-    struct event_fd {
+    class event_fd {
 
         int fd = -1;
         int flags = 0;
+        kernel_events &kevents;
 
 #ifdef EPOLL_EVENTS
         int epfd = -1;      
 #elif defined(KQUEUE_EVENTS)
 #endif
 
-        event_fd(kernel_events &evs, int fd);
+        public:
+
+        struct unique { };
+        struct shared { };
+
+        event_fd(kernel_events &kevents_, unique, int fd_ = -1);
+        event_fd(kernel_events &kevents_, shared, int fd_ = -1);
+        event_fd(event_fd &) = delete;
+        event_fd() = delete;
         ~event_fd(); 
+
+        event_fd & operator=(event_fd &) = delete;
+        int operator*();
+        operator bool();
+        void assign(const int fd);
+        void close();
     };
 
     /** IO Event Object */
@@ -124,7 +139,7 @@ namespace corio
             epoll_event *pointer;
 #elif defined(KQUEUE_EVENTS)
 #endif
-            event &operator*();
+            event operator*();
             iterator operator++();
             bool operator!=(iterator &other);
         };

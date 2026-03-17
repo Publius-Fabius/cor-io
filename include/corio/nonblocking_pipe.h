@@ -1,5 +1,5 @@
-
 #include "corio/error.h"
+#include "corio/kernel_events.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -9,61 +9,54 @@
 namespace corio
 {
     /** Non-Blocking Pipe */
-    template<typename message> class nonblocking_pipe 
+    template<typename message> struct nonblocking_pipe 
     {
-        int fds[2];
-
-        public:
+        event_fd reader;
+        event_fd writer;
 
         using message_type = message;
 
         /**
          * Close both ends of the pipe.
          */
-        void close()
-        {
-            if(fds[0] != -1) ::close(fds[0]);
-            fds[0] = -1;
-            if(fds[1] != -1) ::close(fds[1]);
-            fds[1] = -1;
+        void close() {
+            reader.close();
+            writer.close();
         }
 
         /**
          * Construct a nonblocking_pipe.
          * THROWS: system_error
          */
-        nonblocking_pipe() : fds{-1, -1}
+        
+        nonblocking_pipe(kernel_events &events) : 
+            reader(events, event_fd::unique()),
+            writer(events, event_fd::unique())
         {
             assert(sizeof(message) <= PIPE_BUF);
+
+            int fds[2];
 
             if(pipe(fds) == -1) 
                 throw system_error("::pipe");
 
+            reader.assign(fds[0]);
+            writer.assign(fds[1]);
+
             int flags = -1;
 
-            if((flags = fcntl(fds[0], F_GETFL)) == -1) {
-                close();
+            if((flags = fcntl(*reader, F_GETFL)) == -1) 
                 throw system_error("::fcntl");
-            }
-            if(fcntl(fds[0], F_SETFL, O_NONBLOCK | flags) == -1) {
-                close();
+            if(fcntl(*reader, F_SETFL, O_NONBLOCK | flags) == -1) 
                 throw system_error("::fcntl");
-            }
-
-            if((flags = fcntl(fds[1], F_GETFL)) == -1) {
-                close();
+            
+            if((flags = fcntl(*writer, F_GETFL)) == -1) 
                 throw system_error("::fcntl");
-            }
-            if(fcntl(fds[1], F_SETFL, O_NONBLOCK | flags) == -1) {
-                close();
+            if(fcntl(*writer, F_SETFL, O_NONBLOCK | flags) == -1) 
                 throw system_error("::fcntl");
-            }
         }
 
-        ~nonblocking_pipe()
-        {
-            close();
-        }
+        ~nonblocking_pipe() = default;
 
         /**
          * Write to the pipe. 
@@ -73,7 +66,7 @@ namespace corio
          */
         int write(message &msg)
         {
-            const ssize_t result = ::write(fds[1], &msg, sizeof(message));
+            auto result = ::write(*writer, &msg, sizeof(message));
 
             if(result == -1) 
                 if(errno == EWOULDBLOCK || errno == EAGAIN) 
@@ -95,7 +88,7 @@ namespace corio
          */
         int read(message &msg)
         {
-            const ssize_t result = ::read(fds[0], &msg, sizeof(message));
+            auto result = ::read(*reader, &msg, sizeof(message));
 
             if(result == -1) 
                 if(errno == EWOULDBLOCK || errno == EAGAIN)
@@ -107,16 +100,6 @@ namespace corio
                 throw runtime_error("malformed read from pipe");
 
             return ERR_OK;
-        }
-
-        int get_read_fd()
-        {
-            return fds[0];
-        }
-
-        int get_write_fd()
-        {
-            return fds[1];
         }
     };
 }

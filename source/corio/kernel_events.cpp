@@ -27,8 +27,7 @@ namespace corio
     {
         if(fd == -1) 
             return;
-        if(::close(fd) == -1)
-            throw system_error("::close");
+        ::close(fd);
         fd = -1;
     }
 

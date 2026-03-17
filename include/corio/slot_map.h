@@ -60,14 +60,14 @@ namespace corio
         }
 
         void release(const int slot) {
-            entry &ent = at(slot);
+            auto &ent = at(slot);
             ent.pointer = NULL;
             ++ent.generation;
             m_pool.push(slot);
             --m_size;
         }
 
-        inline uint32_t get_generation(const int slot) {
+        inline uint64_t get_generation(const int slot) {
             return at(slot).generation;
         }
 
@@ -75,45 +75,43 @@ namespace corio
             return at(slot).pointer;
         }
 
-        inline uint32_t increment_generation(const int slot) {
+        inline uint64_t increment_generation(const int slot) {
             return ++at(slot).generation;
         }
 
         inline object* with_generation(const int slot, const uint32_t gen) {
-            entry &ent = at(slot);
+            auto &ent = at(slot);
             return ent.generation == gen ? ent.pointer : NULL;
         }
 
         struct iterator {
             std::vector<entry> &entries;
             int slot;
-            iterator(std::vector<entry> &entries_, int slot_) : 
+            inline iterator(std::vector<entry> &entries_, int slot_) : 
                 entries(entries_),
                 slot(slot_) 
             {
                 for(;slot < entries.size(); ++slot) 
-                    if(entries[slot].pointer)
-                        break;
+                    if(entries[slot].pointer) break;
             }
-            iterator& operator++() {
-                while(slot < entries.size()) 
-                    if(entries[++slot].pointer)
-                        break;
+            inline iterator& operator++() {
+                while(++slot < entries.size()) 
+                    if(entries[slot].pointer) break;
                 return *this;
             }
-            bool operator!=(const iterator& other) const {
+            inline bool operator!=(const iterator& other) const {
                 return slot != other.slot;
             }
-            auto operator*() const {
+            inline object* operator*() const {
                 return entries[slot].pointer;
             }
         };
 
-        iterator begin() {
+        inline iterator begin() {
             return iterator(m_entries, 0);
         }
 
-        iterator end() {
+        inline iterator end() {
             return iterator(m_entries, m_entries.size());
         }
     };

@@ -18,14 +18,14 @@ namespace corio
     /** Server Task */
     struct task;
 
-    /** Coroutine with Task State */
-    using server_coroutine = coroutine<promise<task, int>>;
+     /** RAII Coroutine Task State */
+    template<typename A> using cor = coroutine<promise<task, A>>;
 
     /** Base Callback */
-    using spawn_callback = server_coroutine (*)(data state);
+    using spawn_callback = cor<int> (*)(data state);
 
     /** Socket Accept Callback */
-    using accept_callback = server_coroutine (*)(int socket, data state);
+    using accept_callback = cor<int> (*)(event_fd &sock, data state);
 
     /** Error Callback */
     using error_callback = int (*)(int error, data state);
@@ -105,6 +105,11 @@ namespace corio
          */
         virtual int spawn(spawn_callback call, data state) = 0;
     };
+
+    /** 
+     * Get the current worker's kernel event's object.
+     */
+    kernel_events &get_kernel_events();
 
     /** 
      * Control events for file descriptor from within a coroutine. 
