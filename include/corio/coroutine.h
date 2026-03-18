@@ -11,7 +11,7 @@ namespace corio
     using std::coroutine_handle;
 
     /**
-     * A move-only RAII wrapper for a C++20 coroutine handle. This template 
+     * An RAII wrapper for a C++20 coroutine handle. This template 
      * manages the lifetime of a coroutine state. It ensures that the 
      * coroutine is destroyed when the wrapper goes out of scope and provides 
      * an awaiter to allow the coroutine to be used within co_await 
@@ -29,16 +29,10 @@ namespace corio
         coroutine_handle<P> handle;
 
         /**
-         * Constructs a coroutine from an existing coroutine handle.
+         * Constructs a coroutine from an existing std::coroutine_handle.
          */
-        explicit coroutine(coroutine_handle<P> handle_) : 
+        explicit coroutine(std::coroutine_handle<P> handle_) : 
             handle(handle_) { }
-
-        /**
-         * Move constructor. Transfers ownership of the coroutine handle.
-         */
-        coroutine(coroutine<P> &&other) : 
-            handle(std::exchange(other.handle, nullptr)) { }
 
         /**
          * Destroys the coroutine state if the handle is valid.
@@ -53,7 +47,7 @@ namespace corio
         coroutine(const coroutine<P>&) = delete;
         coroutine& operator=(coroutine<P>&) = delete;
         coroutine& operator=(const coroutine<P>&) = delete;
-        
+
         /**
          * Internal awaiter used to suspend the caller and resume this 
          * coroutine.
@@ -74,7 +68,7 @@ namespace corio
              * @return The handle of the callee to be resumed.
              */
             template<typename caller_handle>
-            coroutine_handle<> await_suspend(caller_handle &caller) {
+            std::coroutine_handle<> await_suspend(caller_handle caller) {
 
                 // Set up the state continuation
                 callee.handle.promise().continuation = caller;
@@ -119,7 +113,7 @@ namespace corio
         using coroutine_type = coroutine<promise<S,A>>;
         
         /** The handle of the parent coroutine to resume upon completion. */
-        coroutine_handle<> continuation = nullptr;
+        std::coroutine_handle<> continuation = nullptr;
 
         /** Pointer to the shared execution state/context. */
         S *state;
@@ -132,7 +126,7 @@ namespace corio
          */
         coroutine<promise<S,A>> get_return_object() {
             return coroutine(
-                coroutine_handle<promise<S,A>>::from_promise(*this));
+                std::coroutine_handle<promise<S,A>>::from_promise(*this));
         }
 
         /**
@@ -160,7 +154,7 @@ namespace corio
              * std::noop_coroutine() if no continuation is set.
              */
             template<typename handle>
-            coroutine_handle<> await_suspend(handle &h) noexcept {
+            std::coroutine_handle<> await_suspend(handle &h) noexcept {
                 if(h.promise().continuation) 
                     return h.promise().continuation;
                 return std::noop_coroutine();
@@ -211,8 +205,8 @@ namespace corio
          * this returns false, the coroutine does not actually stay suspended;
          * it immediately resumes after the pointer has been captured.
          */
-        template<typename P>
-        bool await_suspend(std::coroutine_handle<P> h) noexcept {
+        template<typename handle>
+        bool await_suspend(handle h) noexcept {
             result = h.promise().state; 
             return false;
         }

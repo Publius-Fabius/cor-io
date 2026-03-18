@@ -2,6 +2,7 @@
 #include "corio/slot_map.h"
 #include "corio/nonblocking_pipe.h"
 #include "corio/time.h"
+#include "corio/defer.h"
 #include <queue>
 #include <vector>
 #include <memory>
@@ -59,9 +60,9 @@ namespace corio
         uint64_t id;                                /** Task Id */
         cor<int> runner;                            /** Coroutine */
         std::vector<event> events;                  /** Event Set */
-        task(uint64_t id_, cor<int> &&runner_) : 
+        task(uint64_t id_, spawn_callback call, data state) : 
             id(id_), 
-            runner(std::move(runner_)), 
+            runner(call(state)), 
             mark(0) { }
     };
 
@@ -259,7 +260,8 @@ namespace corio
     task *worker::create_task(spawn_callback callback, data state) {
         task *t = new task(
                 ::atomic_fetch_add(&server.next_id, 1),
-                callback(state));
+                callback,
+                state);
         t->runner.handle.promise().state = t;
         t->slot = slots.acquire(t);
         return t;
@@ -557,17 +559,21 @@ namespace corio
         for(size_t x = 0; x < workers.size(); ++x) 
             threads.emplace_back(launch_worker, workers[x]);
         
-        // Enter main reactor loop.
-        try {
-            main_loop();
-        } catch (std::exception &ex) {
-            fputs(ex.what(), stderr);
-        }
-        
-        ::atomic_store(&mode, MODE_STOPPED);
+        // Cleanup code
+        defer(
 
-        // Clearing here will automatically join the worker threads.
-        threads.clear();
+            // Set server mode to stopped.
+            ::atomic_store(&mode, MODE_STOPPED);
+
+            // Should probably send shutdown signal here.
+
+            // Join jthreads.
+            threads.clear();
+        )
+     
+        // Enter main reactor loop.
+    
+        main_loop();
 
         return ERR_OK;
     }

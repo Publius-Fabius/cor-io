@@ -70,28 +70,30 @@ namespace corio
          * Initialize and set up all the system resources needed for server
          * operation.  
          * 
-         * RETURNS: ERR_OK, ERR_SYS
+         * @return ERR_OK
+         * @throw system_error
          */
         virtual int open() = 0;
 
         /**
          * Close the server, freeing all system resources acquired by open.
          * 
-         * RETURNS: ERR_OK, ERR_SYS
+         * RETURNS: ERR_OK
          */
         virtual int close() = 0;
 
         /** 
          * Start the server by entering its main loop. 
          * 
-         * RETURNS: ERR_OK, ERR_MODE, ERR_SYS 
+         * @return ERR_OK
+         * @throws system_error, runtime_error
          */
         virtual int start() = 0;
 
         /**
          * Signal the server to eventually stop. 
          * 
-         * RETURNS: ERR_OK, ERR_MODE
+         * @return ERR_OK
          */
         virtual int stop() = 0;
 
@@ -114,20 +116,18 @@ namespace corio
     /** 
      * Control events for file descriptor from within a coroutine. 
      * 
-     * RETURNS: ERR_OK, ERR_SYS
+     * @returns ERR_OK
+     * @throws system_error
      */
     int control_events(
         event_fd &fd,
         int op,
         int flags,
         int events);
-    
+
     /** 
      * Wait for events from within a coroutine.  
-     * 
-     * RETURNS: 
-     *      ERR_SYS - A syscall error.
-     *      >= 0 - The number of events received from 0 to max_events.
+     * @returns >= 0 - The number of events received.
      */
     struct wait_for_io_events {
         uint64_t timeout;
@@ -138,7 +138,7 @@ namespace corio
     };
 
     /**
-     * IO Event Iteration.
+     * IO Events Iterable.
      */
     struct io_events_type { 
         event *begin();

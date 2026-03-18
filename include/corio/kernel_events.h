@@ -64,20 +64,14 @@ namespace corio
 
         int fd = -1;
         int flags = 0;
-        kernel_events &kevents;
-
-#ifdef EPOLL_EVENTS
-        int epfd = -1;      
-#elif defined(KQUEUE_EVENTS)
-#endif
-
+     
         public:
 
         struct unique { };
         struct shared { };
 
-        event_fd(kernel_events &kevents_, unique, int fd_ = -1);
-        event_fd(kernel_events &kevents_, shared, int fd_ = -1);
+        event_fd(unique, int fd_ = -1);
+        event_fd(shared, int fd_ = -1);
         event_fd(event_fd &) = delete;
         event_fd() = delete;
         ~event_fd(); 
@@ -92,7 +86,7 @@ namespace corio
     /** IO Event Object */
     class kernel_events
     {
-        int fd, num_events, max_events, position;
+        int efd, num_events, max_events, position;
 
 #ifdef EPOLL_EVENTS
         std::unique_ptr<::epoll_event[]> events;           
@@ -140,7 +134,7 @@ namespace corio
 #elif defined(KQUEUE_EVENTS)
 #endif
             event operator*();
-            iterator operator++();
+            iterator &operator++();
             bool operator!=(iterator &other);
         };
  

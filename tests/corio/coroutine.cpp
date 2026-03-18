@@ -15,13 +15,6 @@ using my_pro = promise<my_state, R>;
 template<typename R>
 using my_cor = coroutine<my_pro<R>>;
 
-template<typename R>
-struct con_test {
-    my_cor<R> cor;
-    con_test(my_cor<R> &&cor_) : 
-        cor(std::move(cor_)) { }
-};
-
 int main(int argc, char **args) {
     puts("testing coroutines...");
 
@@ -67,16 +60,6 @@ int main(int argc, char **args) {
             co_return x; // can co_return accept lvalue?
         })();
         assert(result == 5);
-        
-        puts("testing coroutine move constructor");
-        con_test<int> tt(([]() -> my_cor<int> {
-            puts("inside con_test");
-            puts("inside f6");
-            co_return 6;
-        })());
-        puts("outside con_test");
-        result = co_await tt.cor;
-        assert(result == 6);
         
         co_return 'x';
     })();

@@ -2,12 +2,15 @@
 #define CORIO_SLOT_MAP_H
 
 #include <vector>
-#include <queue>
 #include <stdint.h>
+#include <assert.h>
 
 namespace corio 
 {
     template<typename object> class slot_map {    
+
+        using object_type = object;
+
         struct entry {
             object *pointer;
             uint64_t generation;
@@ -17,23 +20,18 @@ namespace corio
         };
 
         using entry_set = std::vector<entry>;
-        using slot_pool = std::priority_queue<
-            int, 
-            std::vector<int>, 
-            std::greater<int>>;
-
-        entry_set m_entries;
-        slot_pool m_pool;
+        using slot_pool = std::vector<int>;
+      
+        entry_set entries;
+        slot_pool pool;
         size_t m_size;
 
-        inline entry &at(const int index) {
-            assert(0 <= index && index <= m_entries.size());
-            return m_entries.at(index);
+        inline entry &at(const size_t index) {
+            assert(0 <= index && index <= entries.size());
+            return entries.at(index);
         }
 
         public:
-
-        using object_type = object;
 
         slot_map() : m_size(0) { }
 
@@ -42,28 +40,30 @@ namespace corio
         }
 
         int acquire(object *pointer) {
-            m_entries.emplace();
+            assert(pointer != nullptr);
+            int slot = -1;
             if(pool.size() > 0) {
-                const int slot = m_pool.top();
-                m_pool.pop();
+                slot = pool.back();
+                pool.pop_back();
                 entry &ent = at(slot);
+                assert(ent.pointer == nullptr);
                 ent.pointer = pointer;
                 ++ent.generation;
-                ++m_size;
-                return slot;
             } else {
-                const int slot = (int)m_entries.size();
-                m_entries.push_back(entry(pointer));
-                ++m_size;
-                return slot;
+                slot = (int)entries.size();
+                entries.push_back(entry(pointer));
             }
+            assert(slot != -1);
+            ++m_size;
+            return slot;
         }
 
         void release(const int slot) {
             auto &ent = at(slot);
-            ent.pointer = NULL;
+            assert(ent.pointer != nullptr);
+            ent.pointer = nullptr;
             ++ent.generation;
-            m_pool.push(slot);
+            pool.push_back(slot);
             --m_size;
         }
 
@@ -81,13 +81,13 @@ namespace corio
 
         inline object* with_generation(const int slot, const uint32_t gen) {
             auto &ent = at(slot);
-            return ent.generation == gen ? ent.pointer : NULL;
+            return ent.generation == gen ? ent.pointer : nullptr;
         }
 
         struct iterator {
             std::vector<entry> &entries;
-            int slot;
-            inline iterator(std::vector<entry> &entries_, int slot_) : 
+            size_t slot;
+            inline iterator(std::vector<entry> &entries_, size_t slot_) : 
                 entries(entries_),
                 slot(slot_) 
             {
@@ -108,11 +108,11 @@ namespace corio
         };
 
         inline iterator begin() {
-            return iterator(m_entries, 0);
+            return iterator(entries, 0);
         }
 
         inline iterator end() {
-            return iterator(m_entries, m_entries.size());
+            return iterator(entries, entries.size());
         }
     };
 }

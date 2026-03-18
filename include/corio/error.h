@@ -7,8 +7,7 @@
 
 namespace corio
 {
-    static inline std::system_error system_error(const char *msg)
-    {
+    inline std::system_error system_error(const char *msg) {
         return std::system_error(errno, std::generic_category(), msg);
     }
 
