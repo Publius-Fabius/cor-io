@@ -55,15 +55,16 @@ namespace corio
     };
 
     struct task {
-        int mark;                                   /** Ready Set Bit */
+        bool mark;                                  /** Ready Set Bit */
         int slot;                                   /** Slot Number */
         uint64_t id;                                /** Task Id */
         cor<int> runner;                            /** Coroutine */
         std::vector<event> events;                  /** Event Set */
         task(uint64_t id_, spawn_callback call, data state) : 
+            mark(0),
+            slot(-1),
             id(id_), 
-            runner(call(state)), 
-            mark(0) { }
+            runner(call(state)) { }  // URVO init in situ
     };
 
     struct standard_server;
@@ -76,7 +77,7 @@ namespace corio
             uint64_t generation;
             timeout_queue_elem(int slot_, uint64_t exp, uint64_t gen) :
                 slot(slot_), expiry(exp), generation(gen) { }
-            bool operator <(struct timeout_queue_elem &elem) {
+            bool operator <(const struct timeout_queue_elem &elem) const {
                 return expiry > elem.expiry;
             }
         };
@@ -91,23 +92,20 @@ namespace corio
             void push(task *t) { 
                 assert(t);
                 if(t->mark) return;
-                t->mark = 1;
+                t->mark = true;
                 tasks.push_back(t); 
             }
             task *pop() {
-                if(tasks.empty()) return NULL;
+                if(tasks.empty()) return nullptr;
                 task *t = tasks.back();
                 tasks.pop_back();
                 assert(t);
                 assert(t->mark);
-                t->mark = 0;
+                t->mark = false;
                 return t;
             }
             bool empty() {
                 return tasks.empty();
-            }
-            void clear() {
-                tasks.clear();
             }
         };
 
@@ -135,13 +133,13 @@ namespace corio
         void dispatch_ready_set();
         task *create_task(spawn_callback callback, data state);
         void delete_task(task *t);
-        bool tick();
+        void tick();
         void start();
     };
     
     struct standard_server : server
     {
-        using worker_set = std::vector<worker>;
+        using worker_set = std::vector<std::unique_ptr<worker>>;
         using thread_set = std::vector<std::jthread>;
         
         server_params params;
@@ -176,24 +174,22 @@ namespace corio
     thread_local worker *current_worker = nullptr;
 
     struct fd_slot_pair {
-        fd_slot_pair(int fd_, int slot_) :
-            fd(fd_), slot(slot_) { }
-        fd_slot_pair(data pack_) :
-            pack(pack_) { }
         union { 
             struct {
                 int fd;
                 int slot;
-            };
+            } pair;
             data pack;
         };
+        fd_slot_pair(int fd_, int slot_) : pair{ fd_, slot_ } { }
+        fd_slot_pair(data pack_) : pack(pack_) {}
     };
 
     worker::worker(standard_server &srv) :
         server(srv),
         events(srv.params.worker_events),
-        pending(events),
-        messages(events),
+        messages(),
+        pending(),
         current_task(nullptr) { }
 
     worker::~worker() {
@@ -217,54 +213,51 @@ namespace corio
         }
 
         for(event ev : events) {
-            fd_slot_pair pair(ev.data);
-            auto *t = slots[pair.slot];
+            fd_slot_pair pair(ev.binding);
+            auto *t = slots[pair.pair.slot];
             if(!t) continue;
             ready.push(t);
-            t->events.push_back({ ev.events, { .fd = pair.fd }});
+            t->events.push_back({ ev.events, { .fd = pair.pair.fd }});
         }
         
         for(message msg; messages.read(msg) == ERR_OK;) {
             switch(msg.type) {
                 case MESSAGE_SHUTDOWN: continue;
-                case MESSAGE_NOTIFY:
-                    auto *t = slots[msg.slot];
-                    if(!t) continue;
-                    if(t->id != msg.id) continue;
-                    ready.push(t);
-                    t->events.push_back({ EVENT_NOTIFY, { 0 }});
-                    continue;
+                case MESSAGE_NOTIFY: break;
                 default: std::terminate();
             }
+            auto *t = slots[msg.slot];
+            if(!t) continue;
+            if(t->id != msg.id) continue;
+            ready.push(t);
+            t->events.push_back({ EVENT_NOTIFY, { 0 }});
         }
 
         for(task_queue_elem elem; pending.read(elem) == ERR_OK;) {
-            auto *t = create_task(elem.callback, server.params.state);
+            auto *t = create_task(elem.callback, elem.state);
             ready.push(t);
         }
     }
 
     void worker::dispatch_ready_set() {
-        for(task *t; t = ready.pop();) {
+        for(task *t = nullptr; (t = ready.pop());) {
             assert(!t->runner.handle.done());
-
             slots.increment_generation(t->slot);
             current_task = t;
             t->runner.handle.resume();
             current_task = nullptr;
-
             if(t->runner.handle.done()) delete_task(t);
         }
     }
 
     task *worker::create_task(spawn_callback callback, data state) {
-        task *t = new task(
-                ::atomic_fetch_add(&server.next_id, 1),
-                callback,
-                state);
-        t->runner.handle.promise().state = t;
-        t->slot = slots.acquire(t);
-        return t;
+        auto t_ptr = std::make_unique<task>(
+            ::atomic_fetch_add(&server.next_id, 1),
+            callback,
+            state);
+        t_ptr->runner.handle.promise().state = t_ptr.get();
+        t_ptr->slot = slots.acquire(t_ptr.get());
+        return t_ptr.release();
     }
 
     void worker::delete_task(task *t) {
@@ -273,7 +266,7 @@ namespace corio
         server.decrement_tasks();
     }
 
-    bool worker::tick() {
+    void worker::tick() {
         uint64_t timeout = server.params.worker_timeout;
 
         if(!timeouts.empty()) {
@@ -289,22 +282,22 @@ namespace corio
         dispatch_ready_set();
     }
     
-    static void launch_worker(worker &w) {
-        standard_server &s = w.server;
-        current_worker = &w;
+    void launch_worker(worker *w) {
+        standard_server &s = w->server;
+        current_worker = w;
         while(  ::atomic_load(&s.mode) != MODE_STOPPED || 
                 ::atomic_load(&s.num_tasks) > 0)
-            w.tick();
+            w->tick();
     }
 
     standard_server::standard_server(server_params &ps) :
         params(ps),
-        events(ps.server_events),
-        server_socket(events, event_fd::unique()),
-        mode(MODE_CREATED)
+        server_socket(event_fd::unique()),
+        mode(MODE_CREATED),
+        events(ps.server_events)
     {
         for(int x = 0; x < ps.workers; ++x)
-            workers.emplace_back(*this);
+            workers.emplace_back(new worker(*this));
     }
 
     standard_server::~standard_server() {
@@ -328,7 +321,6 @@ namespace corio
     }
 
     void standard_server::create_server_socket() {
-
         assert(server_socket);
 
         int domain = -1;
@@ -434,7 +426,7 @@ namespace corio
         server_params &params = current_worker->server.params;
 
         // Create an automatically managed epoll_fd.
-        event_fd efd(current_worker->events, event_fd::unique(), state.fd);
+        event_fd efd(event_fd::unique(), state.fd);
 
         // Transfer control over to user.
         co_await params.on_accept(efd, params.state);
@@ -457,7 +449,7 @@ namespace corio
             // Listen for write events on pending queues.
             ev.events = EVENT_WRITE;
             for(auto &w : workers) 
-                events.control(w.pending.writer, EVENT_ADD, 0, ev);
+                events.control(w->pending.writer, EVENT_ADD, 0, ev);
  
             // Wait for a pipe to be writable.
             while(events.wait(1000) == 0)
@@ -467,7 +459,7 @@ namespace corio
 
             // Stop listening for write events on pending queues.
             for(auto &w : workers) 
-                events.control(w.pending.writer, EVENT_DELETE, 0, ev);
+                events.control(w->pending.writer, EVENT_DELETE, 0, ev);
 
             // Start listening to server_socket again.
             ev.events = EVENT_READ;
@@ -476,9 +468,7 @@ namespace corio
         } while(true);
     }
 
-    void standard_server::accept_connections() {
-        const int max_tasks = params.worker_tasks * params.workers;
-            
+    void standard_server::accept_connections() {     
         do {
             // "Pre-allocate" the task so we aren't stuck with an open fd. 
             if(!increment_tasks())
@@ -557,15 +547,15 @@ namespace corio
 
         // Launch the worker threads.
         for(size_t x = 0; x < workers.size(); ++x) 
-            threads.emplace_back(launch_worker, workers[x]);
+            threads.emplace_back(launch_worker, workers[x].get());
         
-        // Cleanup code
+        // Cleanup
         defer(
 
             // Set server mode to stopped.
             ::atomic_store(&mode, MODE_STOPPED);
 
-            // Should probably send shutdown signal here.
+            // Send shutdown signal here.
 
             // Join jthreads.
             threads.clear();
@@ -598,7 +588,7 @@ namespace corio
 
         for(size_t x = 0; x < size; ++x) {
             const size_t index = (x + base_index) % size;
-            switch(workers[index].pending.write(elem)) {
+            switch(workers[index]->pending.write(elem)) {
                 case ERR_WANTW: continue;
                 case ERR_OK: return ERR_OK;
                 default: std::terminate();
@@ -618,10 +608,6 @@ namespace corio
         return ERR_OK;
     }
 
-    kernel_events& get_kernel_events() {
-        return current_worker->events;
-    }
-
     int control_events(
         event_fd &fd,
         int op,
@@ -635,34 +621,31 @@ namespace corio
         return 0;
     }
     
-    wait_for_io_events::wait_for_io_events(uint64_t timeout_) :
+    io_events::io_events(uint64_t timeout_) :
         timeout(timeout_) { }
 
-    bool wait_for_io_events::await_ready() const noexcept {
+    bool io_events::await_ready() const noexcept {
         return true;
     }
 
-    void wait_for_io_events::await_suspend(coroutine_handle<> handle) {
+    void io_events::await_suspend(coroutine_handle<> handle) {
         auto &w = *current_worker;
-        auto &t = *w.current_task;
+        owner = w.current_task;
         auto expiry = timeout + now_ms<uint64_t>();
-        auto gen = w.slots.get_generation(t.slot);
-        w.timeouts.push(worker::timeout_queue_elem(t.slot, expiry, gen));
-        t.events.clear();
+        auto gen = w.slots.get_generation(owner->slot);
+        w.timeouts.push(worker::timeout_queue_elem(owner->slot, expiry, gen));
+        owner->events.clear();
     }
 
-    int wait_for_io_events::await_resume() noexcept {
-        auto &t = *current_worker->current_task;
-        return (int)t.events.size();
+    int io_events::await_resume() noexcept {
+        return (int)owner->events.size();
     }
 
-    event* io_events_type::begin() {
-        auto &t = *current_worker->current_task;
-        return t.events.data();
+    event* io_events::begin() {
+        return owner->events.data();
     }
 
-    event* io_events_type::end() {
-        auto &t = *current_worker->current_task;
-        return t.events.data() + t.events.size();
+    event* io_events::end() {
+        return owner->events.data() + owner->events.size();
     }
 }

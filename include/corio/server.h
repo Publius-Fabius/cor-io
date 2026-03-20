@@ -109,11 +109,6 @@ namespace corio
     };
 
     /** 
-     * Get the current worker's kernel event's object.
-     */
-    kernel_events &get_kernel_events();
-
-    /** 
      * Control events for file descriptor from within a coroutine. 
      * 
      * @returns ERR_OK
@@ -125,25 +120,20 @@ namespace corio
         int flags,
         int events);
 
-    /** 
-     * Wait for events from within a coroutine.  
-     * @returns >= 0 - The number of events received.
+    /**
+     * IO Events
      */
-    struct wait_for_io_events {
+    class io_events { 
         uint64_t timeout;
-        wait_for_io_events(uint64_t timeout);
+        task *owner;
+        public:
+        io_events(uint64_t timeout_);
         bool await_ready() const noexcept;
         void await_suspend(coroutine_handle<> handle);
         int await_resume() noexcept;
-    };
-
-    /**
-     * IO Events Iterable.
-     */
-    struct io_events_type { 
         event *begin();
         event *end();
-    } io_events;
+    };
 }
 
 #endif

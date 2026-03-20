@@ -11,31 +11,32 @@ bin :
 # defer 
 bin/defer_test : tests/corio/defer.cpp include/corio/defer.h bin  
 	$(CC) $(CFLAGS) -o $@ $<
-mt_defer_test : bin/defer_test
+run_defer_test : bin/defer_test
 	valgrind -q --error-exitcode=1 --leak-check=full $^ 1>/dev/null
-
 
 # coroutines 
 bin/coroutine_test : tests/corio/coroutine.cpp include/corio/coroutine.h bin  
 	$(CC) $(CFLAGS) -o $@ $<
-mt_coroutine_test : bin/coroutine_test
+run_coroutine_test : bin/coroutine_test
 	valgrind -q --error-exitcode=1 --leak-check=full $^ 1>/dev/null
 
 # slot_map 
 bin/slot_map_test : tests/corio/slot_map.cpp include/corio/slot_map.h bin  
 	$(CC) $(CFLAGS) -o $@ $<
-mt_slot_map_test : bin/slot_map_test
+run_slot_map_test : bin/slot_map_test
 	valgrind -q --error-exitcode=1 --leak-check=full $^ 1>/dev/null
 
+# kernel_events 
+build/kernel_events.o : source/corio/kernel_events.cpp include/corio/kernel_events.h build 
+	$(CC) $(CFLAGS) -c -o $@ $<
+bin/kernel_events_test : tests/corio/kernel_events.cpp build/kernel_events.o 
+	$(CC) $(CFLAGS) -o $@ $^
+run_kernel_events_test : bin/kernel_events_test 
+	valgrind -q --error-exitcode=1 --track-fds=yes --leak-check=full $^ 1>/dev/null
 
-# error.h
-#build/selc/error.o : source/selc/error.c include/selc/error.h
-#	$(CC) $(CFLAGS) -c -o $@ $<
-#bin/test_error : tests/selc/error.c build/selc/error.o
-#	$(CC) $(CFLAGS) -o $@ $^
-#lib/libselc.a : \
-#	build/selc/error.o
-#	ar -crs $@ $^
+# server 
+build/server.o : source/corio/server.cpp include/corio/server.h build 
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
 	rm bin/* || true 

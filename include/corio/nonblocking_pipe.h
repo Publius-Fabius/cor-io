@@ -29,9 +29,9 @@ namespace corio
          * THROWS: system_error
          */
         
-        nonblocking_pipe(kernel_events &events) : 
-            reader(events, event_fd::unique()),
-            writer(events, event_fd::unique())
+        nonblocking_pipe() : 
+            reader(event_fd::unique()),
+            writer(event_fd::unique())
         {
             assert(sizeof(message) <= PIPE_BUF);
 
@@ -68,11 +68,12 @@ namespace corio
         {
             auto result = ::write(*writer, &msg, sizeof(message));
 
-            if(result == -1) 
+            if(result == -1) {
                 if(errno == EWOULDBLOCK || errno == EAGAIN) 
                     return ERR_WANTW;
                 else 
                     throw system_error("write to pipe error");
+            }
 
             if(result != sizeof(message_type)) 
                 throw runtime_error("malformed write to pipe"); 
@@ -90,11 +91,12 @@ namespace corio
         {
             auto result = ::read(*reader, &msg, sizeof(message));
 
-            if(result == -1) 
+            if(result == -1) {
                 if(errno == EWOULDBLOCK || errno == EAGAIN)
                     return ERR_WANTR;
                 else 
                     throw system_error("read from pipe error");
+            }
 
             if(result != sizeof(message)) 
                 throw runtime_error("malformed read from pipe");

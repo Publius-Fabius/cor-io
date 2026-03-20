@@ -9,7 +9,7 @@
 
 #ifdef __linux__
 
-#define EPOLL_EVENTS 1
+#define EPOLL_EVENTS
 
 #include <sys/epoll.h>
 
@@ -18,7 +18,7 @@
         defined(__NetBSD__) || \
         defined(__OpenBSD__) || \
         defined(__DragonFly__)
-#define KQUEUE_EVENTS 1
+#define KQUEUE_EVENTS
 #error "KQUEUE NOT YET SUPPORTED"
 #else
 #error "SYSTEM NOT SUPPORTED"
@@ -54,7 +54,7 @@ namespace corio
     /** IO Event */
     struct event {
         int events;
-        data data;
+        data binding;
     };
 
     class kernel_events;
@@ -86,7 +86,7 @@ namespace corio
     /** IO Event Object */
     class kernel_events
     {
-        int efd, num_events, max_events, position;
+        int efd, num_events, max_events;
 
 #ifdef EPOLL_EVENTS
         std::unique_ptr<::epoll_event[]> events;           

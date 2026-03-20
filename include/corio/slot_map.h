@@ -53,7 +53,6 @@ namespace corio
                 slot = (int)entries.size();
                 entries.push_back(entry(pointer));
             }
-            assert(slot != -1);
             ++m_size;
             return slot;
         }
@@ -79,7 +78,7 @@ namespace corio
             return ++at(slot).generation;
         }
 
-        inline object* with_generation(const int slot, const uint32_t gen) {
+        inline object* with_generation(const int slot, const uint64_t gen) {
             auto &ent = at(slot);
             return ent.generation == gen ? ent.pointer : nullptr;
         }
